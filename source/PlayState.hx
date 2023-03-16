@@ -41,6 +41,7 @@ import lime.utils.Assets;
 import openfl.display.BlendMode;
 import openfl.display.StageQuality;
 import openfl.filters.ShaderFilter;
+import core.ScriptCore;
 import Character;
 
 using StringTools;
@@ -93,6 +94,8 @@ class PlayState extends MusicBeatState
 	private var camHUD:FlxCamera;
 	private var camGame:FlxCamera;
 
+	private var scriptArray:Array<ScriptCore> = [];
+
 	var dialogue:Array<String> = ['blah blah blah', 'coolswag'];
 
 	var halloweenBG:FlxSprite;
@@ -113,7 +116,6 @@ class PlayState extends MusicBeatState
 	var bgGirls:BackgroundGirls;
 	var wiggleShit:WiggleEffect = new WiggleEffect();
 
-	var talking:Bool = true;
 	var songScore:Int = 0;
 	var scoreTxt:FlxText;
 
@@ -674,11 +676,11 @@ class PlayState extends MusicBeatState
 
 		playerStrums = new FlxTypedGroup<FlxSprite>();
 
-		// startCountdown();
-
 		generateSong(SONG.song);
 
-		// add(strumLine);
+		for (script in Assets.list(TEXT).filter(text -> text.contains('assets/scripts')))
+			if (script.endsWith('.hx'))
+				scriptArray.push(new ScriptCore(script));
 
 		camFollow = new FlxObject(0, 0, 1, 1);
 
@@ -735,11 +737,9 @@ class PlayState extends MusicBeatState
 		scoreTxt.cameras = [camHUD];
 		doof.cameras = [camHUD];
 
-		// if (SONG.song == 'South')
-		// FlxG.camera.alpha = 0.7;
-		// UI_camera.zoom = 1;
+		if (Assets.exists(Paths.hx('songs/' + ${SONG.song.toLowerCase()} + '/script')))
+			scriptArray.push(new ScriptCore(Paths.hx('songs/' + ${SONG.song.toLowerCase()} + '/script')));
 
-		// cameras = [FlxG.cameras.list[1]];
 		startingSong = true;
 
 		if (isStoryMode)
@@ -886,15 +886,24 @@ class PlayState extends MusicBeatState
 
 	function startCountdown():Void
 	{
+		if (startedCountdown)
+		{
+			callOnScripts('startCountdown', []);
+			return;
+		}
+
 		inCutscene = false;
+		var ret:Dynamic = callOnScripts('startCountdown', []);
+		if (ret != ScriptCore.Function_Stop)
+		{
 
-		generateStaticArrows(0);
-		generateStaticArrows(1);
+			generateStaticArrows(0);
+			generateStaticArrows(1);
 
-		talking = false;
-		startedCountdown = true;
-		Conductor.songPosition = 0;
-		Conductor.songPosition -= Conductor.crochet * 5;
+			startedCountdown = true;
+			Conductor.songPosition = 0;
+			Conductor.songPosition -= Conductor.crochet * 5;
+		}
 
 		var swagCounter:Int = 0;
 
@@ -1283,6 +1292,7 @@ class PlayState extends MusicBeatState
 		}
 		#end
 
+		callOnScripts('onFocus', []);
 		super.onFocus();
 	}
 	
@@ -1290,11 +1300,10 @@ class PlayState extends MusicBeatState
 	{
 		#if desktop
 		if (health > 0 && !paused)
-		{
 			DiscordClient.changePresence(detailsPausedText, SONG.song + " (" + storyDifficultyText + ")", iconRPC);
-		}
 		#end
 
+		callOnScripts('onFocusLost', []);
 		super.onFocusLost();
 	}
 
@@ -1314,6 +1323,8 @@ class PlayState extends MusicBeatState
 
 	override public function update(elapsed:Float)
 	{
+		callOnScripts('update', [elapsed]);
+
 		#if !debug
 		perfectMode = false;
 		#end
@@ -1556,23 +1567,30 @@ class PlayState extends MusicBeatState
 
 		if (health <= 0)
 		{
-			boyfriend.stunned = true;
+			gameOver();
+		}
 
-			persistentUpdate = false;
-			persistentDraw = false;
-			paused = true;
+		private function gameOver()
+		{
+			var ret:Dynamic = callOnScripts('gameOver', []);
+			if (ret != ScriptCore.Function_Stop)
+			{
+				boyfriend.stunned = true;
 
-			vocals.stop();
-			FlxG.sound.music.stop();
+				persistentUpdate = false;
+				persistentDraw = false;
+				paused = true;
 
-			openSubState(new GameOverSubstate(boyfriend.getScreenPosition().x, boyfriend.getScreenPosition().y));
+				vocals.stop();
+				FlxG.sound.music.stop();
 
-			// FlxG.switchState(new GameOverState(boyfriend.getScreenPosition().x, boyfriend.getScreenPosition().y));
+				openSubState(new GameOverSubstate(boyfriend.getScreenPosition().x, boyfriend.getScreenPosition().y));
 			
-			#if desktop
-			// Game Over doesn't get his own variable because it's only used here
-			DiscordClient.changePresence("Game Over - " + detailsText, SONG.song + " (" + storyDifficultyText + ")", iconRPC);
-			#end
+				#if desktop
+				// Game Over doesn't get his own variable because it's only used here
+				DiscordClient.changePresence("Game Over - " + detailsText, SONG.song + " (" + storyDifficultyText + ")", iconRPC);
+				#end
+			}
 		}
 
 		if (unspawnNotes[0] != null)
@@ -1686,78 +1704,79 @@ class PlayState extends MusicBeatState
 		canPause = false;
 		FlxG.sound.music.volume = 0;
 		vocals.volume = 0;
-		if (SONG.validScore)
+		var ret:Dynamic = callOnScripts('endSong', []);
+		if (ret != ScriptCore.Function_Stop)
 		{
-			#if !switch
-			Highscore.saveScore(SONG.song, songScore, storyDifficulty);
-			#end
-		}
-
-		if (isStoryMode)
-		{
-			campaignScore += songScore;
-
-			storyPlaylist.remove(storyPlaylist[0]);
-
-			if (storyPlaylist.length <= 0)
+			if (SONG.validScore)
 			{
-				FlxG.sound.playMusic(Paths.music('freakyMenu'));
+				Highscore.saveScore(SONG.song, songScore, storyDifficulty);
+			}
 
-				transIn = FlxTransitionableState.defaultTransIn;
-				transOut = FlxTransitionableState.defaultTransOut;
+			if (isStoryMode)
+			{
+				campaignScore += songScore;
 
-				FlxG.switchState(new StoryMenuState());
+				storyPlaylist.remove(storyPlaylist[0]);
 
-				// if ()
-				StoryMenuState.weekUnlocked[Std.int(Math.min(storyWeek + 1, StoryMenuState.weekUnlocked.length - 1))] = true;
-
-				if (SONG.validScore)
+				if (storyPlaylist.length <= 0)
 				{
-					NGio.unlockMedal(60961);
-					Highscore.saveWeekScore(storyWeek, campaignScore, storyDifficulty);
-				}
+					FlxG.sound.playMusic(Paths.music('freakyMenu'));
 
-				FlxG.save.data.weekUnlocked = StoryMenuState.weekUnlocked;
-				FlxG.save.flush();
+					transIn = FlxTransitionableState.defaultTransIn;
+					transOut = FlxTransitionableState.defaultTransOut;
+
+					FlxG.switchState(new StoryMenuState());
+
+					// if ()
+					StoryMenuState.weekUnlocked[Std.int(Math.min(storyWeek + 1, StoryMenuState.weekUnlocked.length - 1))] = true;
+
+					if (SONG.validScore)
+					{
+						Highscore.saveWeekScore(storyWeek, campaignScore, storyDifficulty);
+					}
+
+					FlxG.save.data.weekUnlocked = StoryMenuState.weekUnlocked;
+					FlxG.save.flush();
+				}
+				else
+				{
+					var difficulty:String = "";
+
+					if (storyDifficulty == 0)
+						difficulty = '-easy';
+
+					if (storyDifficulty == 2)
+						difficulty = '-hard';
+
+					trace('LOADING NEXT SONG');
+					trace(PlayState.storyPlaylist[0].toLowerCase() + difficulty);
+
+					if (SONG.song.toLowerCase() == 'eggnog')
+					{
+						var blackShit:FlxSprite = new FlxSprite(-FlxG.width * FlxG.camera.zoom,
+							-FlxG.height * FlxG.camera.zoom).makeGraphic(FlxG.width * 3, FlxG.height * 3, FlxColor.BLACK);
+						blackShit.scrollFactor.set();
+						add(blackShit);
+						camHUD.visible = false;
+
+						FlxG.sound.play(Paths.sound('Lights_Shut_off'));
+					}
+
+					FlxTransitionableState.skipNextTransIn = true;
+					FlxTransitionableState.skipNextTransOut = true;
+					prevCamFollow = camFollow;
+
+					PlayState.SONG = Song.loadFromJson(PlayState.storyPlaylist[0].toLowerCase() + difficulty, PlayState.storyPlaylist[0]);
+					FlxG.sound.music.stop();
+
+					LoadingState.loadAndSwitchState(new PlayState());
+				}
 			}
 			else
 			{
-				var difficulty:String = "";
-
-				if (storyDifficulty == 0)
-					difficulty = '-easy';
-
-				if (storyDifficulty == 2)
-					difficulty = '-hard';
-
-				trace('LOADING NEXT SONG');
-				trace(PlayState.storyPlaylist[0].toLowerCase() + difficulty);
-
-				if (SONG.song.toLowerCase() == 'eggnog')
-				{
-					var blackShit:FlxSprite = new FlxSprite(-FlxG.width * FlxG.camera.zoom,
-						-FlxG.height * FlxG.camera.zoom).makeGraphic(FlxG.width * 3, FlxG.height * 3, FlxColor.BLACK);
-					blackShit.scrollFactor.set();
-					add(blackShit);
-					camHUD.visible = false;
-
-					FlxG.sound.play(Paths.sound('Lights_Shut_off'));
-				}
-
-				FlxTransitionableState.skipNextTransIn = true;
-				FlxTransitionableState.skipNextTransOut = true;
-				prevCamFollow = camFollow;
-
-				PlayState.SONG = Song.loadFromJson(PlayState.storyPlaylist[0].toLowerCase() + difficulty, PlayState.storyPlaylist[0]);
-				FlxG.sound.music.stop();
-
-				LoadingState.loadAndSwitchState(new PlayState());
+				trace('WENT BACK TO FREEPLAY??');
+				FlxG.switchState(new FreeplayState());
 			}
-		}
-		else
-		{
-			trace('WENT BACK TO FREEPLAY??');
-			FlxG.switchState(new FreeplayState());
 		}
 	}
 
@@ -2148,6 +2167,8 @@ class PlayState extends MusicBeatState
 					boyfriend.playAnim('singRIGHTmiss', true);
 			}
 		}
+
+		callOnScripts('noteMiss', [direction]);
 	}
 
 	function badNoteCheck()
@@ -2224,6 +2245,8 @@ class PlayState extends MusicBeatState
 				note.destroy();
 			}
 		}
+
+		callOnScripts('goodNoteHit', [daNote]);
 	}
 
 	var fastCarCanDrive:Bool = true;
@@ -2326,6 +2349,8 @@ class PlayState extends MusicBeatState
 		{
 			// dad.dance();
 		}
+
+		callOnScripts('stepHit', [curStep]);
 	}
 
 	var lightningStrikeBeat:Int = 0;
@@ -2443,6 +2468,32 @@ class PlayState extends MusicBeatState
 		{
 			lightningStrikeShit();
 		}
+
+		callOnScripts('beatHit', [curBeat]);
+	}
+
+	override function destroy()
+	{
+		scriptArray = [];
+
+		callOnScripts('destroy', []);
+
+		super.destroy();
+	}
+
+	private function callOnScripts(funcName:String, args:Array<Dynamic>):Dynamic
+	{
+		var value:Dynamic = ScriptCore.Function_Continue;
+
+		for (i in 0...scriptArray.length)
+		{
+			final call:Dynamic = scriptArray[i].executeFunc(funcName, args);
+			final bool:Bool = call == ScriptCore.Function_Continue;
+			if (!bool && call != null)
+				value = call;
+		}
+
+		return value;
 	}
 
 	var curLight:Int = 0;
